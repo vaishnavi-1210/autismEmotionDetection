@@ -66,7 +66,7 @@ function App() {
               )}
 
               <Typography variant="body1" paragraph>
-                Upload a video to analyze emotion and engagement patterns.
+                Upload a video to analyze behavior patterns.
               </Typography>
 
               <VideoUpload />
