@@ -1,5 +1,6 @@
 import os
 import sys
+import importlib
 import importlib.util
 from pathlib import Path
 import torch
@@ -193,9 +194,14 @@ def extract_coordinates_and_animate(video_path, session_id):
     """
     from config import PROCESSED_DIR, ANIMATIONS_DIR
 
+    # Add root directory to path so we can import video_to_coordinates and 2d_animation
+    if str(ROOT_DIR) not in sys.path:
+        sys.path.insert(0, str(ROOT_DIR))
+
     try:
         # Step 1: Extract coordinates using root-level video_to_coordinates.py
-        coord_module = __import__('video_to_coordinates', fromlist=['extract_coordinates_from_video'])
+        print(f"[{session_id}] 📹 Loading video_to_coordinates module...")
+        import video_to_coordinates as coord_module
 
         processed_dir = PROCESSED_DIR / session_id
         processed_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +214,9 @@ def extract_coordinates_and_animate(video_path, session_id):
             raise Exception("Coordinate extraction failed")
 
         # Step 2: Generate 2D animation using root-level 2d_animation.py
-        anim_module = __import__('2d_animation', fromlist=['generate_2d_animation'])
+        print(f"[{session_id}] 🎬 Loading 2d_animation module...")
+        import importlib
+        anim_module = importlib.import_module('2d_animation')
 
         anim_dir = ANIMATIONS_DIR / session_id
         anim_dir.mkdir(parents=True, exist_ok=True)
