@@ -16,7 +16,7 @@ import aiofiles
 import cv2
 
 from config import (
-    DATA_DIR, UPLOADS_DIR, PROCESSED_DIR, FEATURES_DIR, RESULTS_DIR,
+    DATA_DIR, UPLOADS_DIR, PROCESSED_DIR, FEATURES_DIR, RESULTS_DIR, ANIMATIONS_DIR,
     SESSION_DIR, MAX_FILE_SIZE, MAX_DURATION, ALLOWED_FORMATS
 )
 from models import VideoUploadResponse, SessionStatus, ProcessingStatus, ExportData
@@ -33,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for directory in [UPLOADS_DIR, PROCESSED_DIR, FEATURES_DIR, RESULTS_DIR, SESSION_DIR]:
+for directory in [UPLOADS_DIR, PROCESSED_DIR, FEATURES_DIR, RESULTS_DIR, ANIMATIONS_DIR, SESSION_DIR]:
     os.makedirs(directory, exist_ok=True)
 
 
@@ -310,7 +310,7 @@ async def get_coordinates(session_id: str):
         coord_file = PROCESSED_DIR / session_id / "coordinates.json"
         if not coord_file.exists():
             raise HTTPException(status_code=404, detail="Coordinates not found")
-        
+
         return FileResponse(
             coord_file,
             media_type="application/json",
@@ -320,6 +320,25 @@ async def get_coordinates(session_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve coordinates: {str(e)}")
+
+
+@app.get("/api/v1/animation/{session_id}")
+async def get_animation(session_id: str):
+    """Download the 2D behavior animation video"""
+    try:
+        anim_file = ANIMATIONS_DIR / session_id / "behavior_animation.mp4"
+        if not anim_file.exists():
+            raise HTTPException(status_code=404, detail="Animation not found")
+
+        return FileResponse(
+            anim_file,
+            media_type="video/mp4",
+            filename=f"behavior_animation_{session_id}.mp4"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve animation: {str(e)}")
 
 
 @app.get("/api/v1/features/{session_id}")

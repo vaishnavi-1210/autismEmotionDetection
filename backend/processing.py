@@ -27,38 +27,29 @@ def update_progress(session_id, progress_val, current_stage=""):
         print(f"DEBUG: Error updating progress: {e}")
 
 def extract_coordinates_from_video(session_id: str) -> bool:
-    """Extract coordinates using the friend's MediaPipe logic."""
+    """Extract coordinates and generate 2D animation."""
     try:
-        from maam_compat import run_real_extraction
-        
-        print(f"[{session_id}] AutismIQ: Starting coordinate extraction...")
-        update_progress(session_id, 10, "Extracting Landmarks")
+        from maam_compat import extract_coordinates_and_animate
+
+        print(f"[{session_id}] 🎥 AutismIQ: Starting coordinate extraction & animation...")
+        update_progress(session_id, 10, "Extracting Landmarks & Generating Animation")
         stage_start = time.time()
 
         video_path = UPLOADS_DIR / session_id / "video.mp4"
         if not video_path.exists():
             raise Exception(f"Video not found: {video_path}")
 
-        processed_dir = PROCESSED_DIR / session_id
-        os.makedirs(processed_dir, exist_ok=True)
-        output_json_path = processed_dir / "coordinates.json"
+        # Extract coordinates AND generate animation
+        coord_json, anim_video = extract_coordinates_and_animate(str(video_path), session_id)
 
-        # Run the bridge to friend's script
-        success = run_real_extraction(str(video_path), str(output_json_path))
-        
-        if not success or not output_json_path.exists():
-            err_file = processed_dir / "extraction_error.txt"
-            if err_file.exists():
-                with open(err_file, "r") as f:
-                    detailed_err = f.read()
-                raise Exception(f"Extraction failed: {detailed_err.splitlines()[0]}")
-            raise Exception("Coordinate extraction failed to produce output")
+        if not coord_json or not anim_video:
+            raise Exception("Coordinate extraction or animation generation failed")
 
-        update_progress(session_id, 40, "Landmarks Extracted")
-        print(f"[{session_id}] Coordinate extraction finished in {time.time() - stage_start:.2f}s")
+        update_progress(session_id, 40, "Landmarks Extracted & Animation Ready")
+        print(f"[{session_id}] ✅ Extraction + Animation finished in {time.time() - stage_start:.2f}s")
         return True
     except Exception as e:
-        print(f"[{session_id}] Extraction Stage Failed: {str(e)}")
+        print(f"[{session_id}] ❌ Extraction Stage Failed: {str(e)}")
         traceback.print_exc()
         return False
 

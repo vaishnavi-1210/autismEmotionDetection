@@ -16,6 +16,7 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 PROCESSED_DIR = DATA_DIR / "processed"
 FEATURES_DIR = DATA_DIR / "features"
 RESULTS_DIR = DATA_DIR / "results"
+ANIMATIONS_DIR = DATA_DIR / "animations"
 SESSION_DIR = DATA_DIR / "sessions"
 MODELS_DIR = SEH_DIR  # Using provided weights folder
 

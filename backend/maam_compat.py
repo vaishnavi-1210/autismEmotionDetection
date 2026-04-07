@@ -7,10 +7,12 @@ import torch.nn as nn
 import numpy as np
 import re
 import traceback
+import subprocess
 
 # Add SEH directory to path to allow imports
 BASE_DIR = Path(__file__).resolve().parent.parent
 SEH_DIR = BASE_DIR / "SEH backend code"
+ROOT_DIR = BASE_DIR
 
 def get_maam_module(name):
     """Dynamically load Maam's script as a module."""
@@ -20,7 +22,7 @@ def get_maam_module(name):
         script_path = BASE_DIR / "backend" / f"{name}.py"
         if not script_path.exists():
             raise FileNotFoundError(f"Script not found: {script_path}")
-    
+
     spec = importlib.util.spec_from_file_location(name, str(script_path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -177,3 +179,51 @@ def run_modality_pipeline(modality, session_id):
         print(f"[ERROR] Feature extraction failed for {modality}: {e}")
         # Return zero feature vector as fallback
         return np.zeros(256)
+
+
+def extract_coordinates_and_animate(video_path, session_id):
+    """Extract coordinates from video and generate 2D animation
+
+    Args:
+        video_path: Path to input video
+        session_id: Session ID for organizing output
+
+    Returns:
+        tuple: (coordinates_json_path, animation_video_path) or (None, None) on failure
+    """
+    from config import PROCESSED_DIR, ANIMATIONS_DIR
+
+    try:
+        # Step 1: Extract coordinates using root-level video_to_coordinates.py
+        coord_module = __import__('video_to_coordinates', fromlist=['extract_coordinates_from_video'])
+
+        processed_dir = PROCESSED_DIR / session_id
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        coord_json_path = processed_dir / "coordinates.json"
+
+        print(f"[{session_id}] 📹 Extracting coordinates from video...")
+        success = coord_module.extract_coordinates_from_video(str(video_path), str(coord_json_path))
+
+        if not success or not coord_json_path.exists():
+            raise Exception("Coordinate extraction failed")
+
+        # Step 2: Generate 2D animation using root-level 2d_animation.py
+        anim_module = __import__('2d_animation', fromlist=['generate_2d_animation'])
+
+        anim_dir = ANIMATIONS_DIR / session_id
+        anim_dir.mkdir(parents=True, exist_ok=True)
+        animation_path = anim_dir / "behavior_animation.mp4"
+
+        print(f"[{session_id}] 🎬 Generating 2D behavior animation...")
+        success = anim_module.generate_2d_animation(str(processed_dir), str(animation_path))
+
+        if not success or not animation_path.exists():
+            raise Exception("Animation generation failed")
+
+        print(f"[{session_id}] ✅ Animation ready at: {animation_path}")
+        return str(coord_json_path), str(animation_path)
+
+    except Exception as e:
+        print(f"[{session_id}] ❌ Coordinate extraction/animation error: {e}")
+        traceback.print_exc()
+        return None, None
