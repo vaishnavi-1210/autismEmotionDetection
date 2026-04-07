@@ -303,6 +303,53 @@ async def export_results(session_id: str, format: str = "json"):
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
+@app.get("/api/v1/coordinates/{session_id}")
+async def get_coordinates(session_id: str):
+    """Download the raw coordinates (landmarks) JSON created by extraction"""
+    try:
+        coord_file = PROCESSED_DIR / session_id / "coordinates.json"
+        if not coord_file.exists():
+            raise HTTPException(status_code=404, detail="Coordinates not found")
+        
+        return FileResponse(
+            coord_file,
+            media_type="application/json",
+            filename=f"coordinates_{session_id}.json"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve coordinates: {str(e)}")
+
+
+@app.get("/api/v1/features/{session_id}")
+async def get_features(session_id: str):
+    """Download the intermediate features extracted for research purposes"""
+    try:
+        import shutil
+        import zipfile
+        
+        features_dir = FEATURES_DIR / session_id
+        if not features_dir.exists():
+            raise HTTPException(status_code=404, detail="Features not found")
+            
+        # Create a temporary zip of the features folder
+        temp_zip = Path(tempfile.gettempdir()) / f"features_{session_id}.zip"
+        with zipfile.ZipFile(temp_zip, 'w') as z:
+            for f in features_dir.glob("*.npy"):
+                z.write(f, f.name)
+                
+        return FileResponse(
+            temp_zip,
+            media_type="application/zip",
+            filename=f"features_{session_id}.zip"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve features: {str(e)}")
+
+
 @app.delete("/api/v1/session/{session_id}")
 async def delete_session(session_id: str):
     """Delete session and all associated data"""

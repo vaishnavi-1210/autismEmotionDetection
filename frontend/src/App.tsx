@@ -12,7 +12,7 @@ import {
   Button,
   Alert
 } from '@mui/material'
-import VideoUpload from './components/VideoUpload.js'
+import VideoUpload from './components/VideoUpload'
 
 const theme = createTheme({
   palette: {
@@ -47,7 +47,7 @@ function App() {
               📶
             </Typography>
             <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
-              Autism Emotion Detection System
+              AutismIQ
             </Typography>
           </Toolbar>
         </AppBar>
@@ -56,7 +56,7 @@ function App() {
           <Container maxWidth="lg">
             <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
               <Typography variant="h4" gutterBottom>
-                Welcome! 👋
+                Welcome to AutismIQ 👋
               </Typography>
               
               {message && (
@@ -66,7 +66,7 @@ function App() {
               )}
 
               <Typography variant="body1" paragraph>
-                The Autism Emotion Detection System is ready!
+                Upload a video to analyze emotion and engagement patterns.
               </Typography>
 
               <VideoUpload />
@@ -90,13 +90,13 @@ function App() {
 
               <Box sx={{ mt: 4, p: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
                 <Typography variant="subtitle2" gutterBottom>
-                  Backend Status
+                  System Status
                 </Typography>
                 <Typography variant="body2" color="textSecondary" component="div">
-                  ✅ FastAPI Server: http://localhost:8000
+                  ✅ AutismIQ API: http://localhost:8000
                 </Typography>
                 <Typography variant="body2" color="textSecondary" component="div">
-                  ✅ React Frontend: http://localhost:3000
+                  ✅ React Dashboard: http://localhost:5173
                 </Typography>
               </Box>
             </Paper>
@@ -106,7 +106,7 @@ function App() {
         <Box component="footer" sx={{ py: 3, backgroundColor: '#f5f5f5', borderTop: '1px solid #e0e0e0' }}>
           <Container maxWidth="lg">
             <Typography variant="body2" color="textSecondary" align="center">
-              © 2026 Autism Emotion Detection System v1.0.0 | All Rights Reserved
+              © 2026 AutismIQ v1.0.0 | All Rights Reserved
             </Typography>
           </Container>
         </Box>
