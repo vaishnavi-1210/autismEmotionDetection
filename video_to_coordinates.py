@@ -1,4 +1,5 @@
 import cv2
+import mediapipe_compat  # Apply compatibility patches (from venv site-packages)
 import mediapipe as mp
 import numpy as np
 import json

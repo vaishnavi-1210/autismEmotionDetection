@@ -1,0 +1,76 @@
+{
+    "$id": "D:\\Mini Project\\code3\\WhatsApp Video 2026-03-10 at 12.52.16.mp4",
+    "frame_rate": 0.0,
+    "eye_gaze": {
+        "rx": [],
+        "ry": [],
+        "rz": []
+    },
+    "head_gaze": {
+        "rx": [],
+        "ry": [],
+        "rz": []
+    },
+    "skeleton": {
+        "elbow_left": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "elbow_right": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "hand_left": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "hand_right": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "head": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "sholder_center": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "sholder_left": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "sholder_right": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "wrist_left": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        },
+        "wrist_right": {
+            "confidence": [],
+            "x": [],
+            "y": [],
+            "z": []
+        }
+    }
+}
