@@ -28,7 +28,7 @@ def extract_gaze_and_label(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         task_info = data.get('task', {})
         ability = task_info.get('ability') or data.get('condition')
         ability_str = str(ability).upper() if ability else "UNKNOWN"
@@ -38,28 +38,57 @@ def extract_gaze_and_label(file_path):
             if key in ability_str:
                 final_label = LABEL_MAP[key]
                 break
-        
+
         if final_label is None: return None, None, "Unknown Task"
 
         gaze_data = data.get('eye_gaze', {})
         if not gaze_data: return None, None, "No Gaze Data"
-        
+
         all_series = []
         for feat in GAZE_FEATURES:
             vals = gaze_data.get(feat, [])
             if not vals: return None, None, f"Empty: {feat}"
             all_series.append([v if v is not None else np.nan for v in vals])
-        
-        series_np = np.array(all_series).T 
+
+        series_np = np.array(all_series).T
         clean_series = series_np[~np.isnan(series_np).any(axis=1)]
-        
+
         if clean_series.shape[0] < SEQ_LEN:
             return None, None, f"Too Short"
-            
+
         return clean_series[:SEQ_LEN, :].astype(np.float32), final_label, "Success"
 
     except Exception as e:
         return None, None, f"Error: {str(e)}"
+
+def extract_gaze_features(file_path):
+    """Inference-only: Extract eye gaze features without label dependency."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        gaze_data = data.get('eye_gaze', {})
+        if not gaze_data:
+            raise Exception("No Gaze Data")
+
+        all_series = []
+        for feat in GAZE_FEATURES:
+            vals = gaze_data.get(feat, [])
+            # Truncate to SEQ_LEN or pad with zeros
+            vals = (vals[:SEQ_LEN] if len(vals) >= SEQ_LEN else vals + [0] * (SEQ_LEN - len(vals)))
+            all_series.append([v if v is not None else 0 for v in vals])
+
+        series_np = np.array(all_series, dtype=np.float32).T
+
+        if series_np.shape[1] != 3:
+            raise Exception(f"Invalid feature size: expected 3, got {series_np.shape[1]}")
+
+        if series_np.shape[0] != SEQ_LEN:
+            raise Exception(f"Invalid sequence length: expected {SEQ_LEN}, got {series_np.shape[0]}")
+
+        return series_np.astype(np.float32)
+    except Exception as e:
+        raise Exception(f"[EYE] Feature extraction failed: {str(e)}")
 
 def generate_visualizations(y_raw, y_bal, x_bal):
     """Generates plots to verify data distribution and normalization."""

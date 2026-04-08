@@ -32,7 +32,7 @@ def extract_head_gaze(file_path):
         ability_str = str(ability).upper() if ability else "UNKNOWN"
         final_label = next((LABEL_MAP[k] for k in LABEL_MAP if k in ability_str), None)
         if final_label is None: return None, None
-        
+
         head_data = data.get('head_gaze', {})
         df = pd.DataFrame({'rx': head_data.get('rx', []), 'ry': head_data.get('ry', []), 'rz': head_data.get('rz', [])})
         if df.empty: return None, None
@@ -41,11 +41,42 @@ def extract_head_gaze(file_path):
         df = df.interpolate(method='linear', limit_direction='both').fillna(0)
         series_np = df.values
         if series_np.shape[0] < SEQ_LEN: return None, None
-            
+
         # Orientation Invariance (Relative to start)
         series_np = series_np - series_np[0, :]
         return series_np[:SEQ_LEN, :].astype(np.float32), final_label
     except: return None, None
+
+def extract_head_features(file_path):
+    """Inference-only: Extract head gaze features without label dependency."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        head_data = data.get('head_gaze', {})
+        if not head_data:
+            raise Exception("No Head Gaze Data")
+
+        df = pd.DataFrame({'rx': head_data.get('rx', []), 'ry': head_data.get('ry', []), 'rz': head_data.get('rz', [])})
+        if df.empty:
+            raise Exception("Empty Head Data")
+
+        # Interpolation for continuity
+        df = df.interpolate(method='linear', limit_direction='both').fillna(0)
+        series_np = df.values
+
+        # Truncate to SEQ_LEN or pad with zeros
+        if series_np.shape[0] >= SEQ_LEN:
+            series_np = series_np[:SEQ_LEN, :]
+        else:
+            pad_len = SEQ_LEN - series_np.shape[0]
+            series_np = np.vstack([series_np, np.zeros((pad_len, 3))])
+
+        # Orientation Invariance (Relative to start)
+        series_np = series_np - series_np[0, :]
+        return series_np.astype(np.float32)
+    except Exception as e:
+        raise Exception(f"[HEAD] Feature extraction failed: {str(e)}")
 
 # --- NEW: VISUALIZATION OF PREPROCESSED DATA ---
 def plot_data_diagnostics(X, y):

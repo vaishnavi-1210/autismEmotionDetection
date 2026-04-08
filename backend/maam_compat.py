@@ -123,27 +123,36 @@ def classify_triple_fusion(skel_feat, eye_feat, head_feat):
     return prediction, probs
 
 def run_modality_pipeline(modality, session_id):
-    """Executes the strict sequence: Preprocess -> LSTM -> FE."""
+    """Executes feature extraction for inference (no labels needed)."""
     from config import PROCESSED_DIR, MODELS_DIR
 
     try:
-        # 1. PREPROCESS (preprocess.py)
+        # 1. PREPROCESS (preprocess.py) - Inference mode
         prep_mod = get_maam_module(f"{modality}_preprocess")
         coord_file = PROCESSED_DIR / session_id / "coordinates.json"
 
-        # Map modality to her exact function names in the scripts
+        print(f"[DEBUG-{modality}] Looking for coordinates at: {coord_file}")
+        print(f"[DEBUG-{modality}] File exists: {coord_file.exists()}")
+
+        if not coord_file.exists():
+            raise Exception(f"Coordinates file not found: {coord_file}")
+
+        # Call inference-only functions that return only features (X)
         if modality == 'sk':
-            X_clean, _, _ = prep_mod.extract_data_and_label(str(coord_file))
+            X_clean = prep_mod.extract_skeleton_features(str(coord_file))
         elif modality == 'eye':
-            X_clean, _, _ = prep_mod.extract_gaze_and_label(str(coord_file))
+            X_clean = prep_mod.extract_gaze_features(str(coord_file))
         elif modality == 'head':
-            # Head only returns 2 values: series, label
-            X_clean, _ = prep_mod.extract_head_gaze(str(coord_file))
+            X_clean = prep_mod.extract_head_features(str(coord_file))
+        else:
+            raise Exception(f"Unknown modality: {modality}")
 
-        if X_clean is None:
-            X_clean = np.zeros((30, 40 if modality=='sk' else 3))
+        # Validate feature dimensions
+        expected_dim = 30 if modality == 'sk' else 3
+        if X_clean.shape[1] != expected_dim:
+            raise Exception(f"[{modality}] Feature dimension mismatch: expected {expected_dim}, got {X_clean.shape[1]}")
 
-        # Normalization (Matches her script's mean/std logic)
+        # Normalization
         X_norm = (X_clean - np.mean(X_clean)) / (np.std(X_clean) + 1e-8)
         X_tensor = torch.FloatTensor(X_norm).unsqueeze(0) # [1, 30, dim]
 
@@ -153,9 +162,9 @@ def run_modality_pipeline(modality, session_id):
         name_map = {'sk': 'skeleton', 'eye': 'eye', 'head': 'head'}
         weights_path = MODELS_DIR / f"bilstm_{name_map[modality]}_model.pth"
 
-        input_dim = 40 if modality == 'sk' else 3
+        input_dim = 30 if modality == 'sk' else 3
 
-        # Initialize her specific model class name
+        # Initialize model
         if modality == 'head':
             model = fe_mod.HeadGazeBiLSTM(input_size=input_dim).to(torch.device("cpu"))
         else:
@@ -166,6 +175,7 @@ def run_modality_pipeline(modality, session_id):
                 checkpoint = torch.load(weights_path, map_location="cpu")
                 state_dict = checkpoint.get("model_state_dict", checkpoint)
                 model.load_state_dict(state_dict)
+                print(f"[✓] Loaded model weights: {weights_path}")
             except Exception as e:
                 print(f"[WARN] Could not load model {weights_path}: {e}. Using untrained model.")
         else:
@@ -173,13 +183,14 @@ def run_modality_pipeline(modality, session_id):
 
         model.eval()
         with torch.no_grad():
-            # Forward pass in her FE modules
+            # Forward pass
             features = model(X_tensor)
+            print(f"[✓] {modality.upper()} extracted: input shape {X_tensor.shape}, output shape {features.shape}")
             return features.cpu().numpy()[0]
     except Exception as e:
         print(f"[ERROR] Feature extraction failed for {modality}: {e}")
-        # Return zero feature vector as fallback
-        return np.zeros(256)
+        # DO NOT use fallback if real extraction fails - raise the error
+        raise
 
 
 def extract_coordinates_and_animate(video_path, session_id):
