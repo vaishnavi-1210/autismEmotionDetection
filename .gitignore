@@ -65,6 +65,7 @@ data/processed/
 data/features/
 data/results/
 data/sessions/
+data/animations/
 
 # Logs
 *.log
