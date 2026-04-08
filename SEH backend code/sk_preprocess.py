@@ -8,9 +8,12 @@ from collections import Counter
 from sklearn.utils import resample, shuffle
 
 # ================= CONFIGURATION =================
-RAW_JSON_DIR = r"E:\muruga\data\DREAMdataset"
-SAVE_FOLDER = r"E:\muruga\hgnn\dream"
-DIAGNOSTIC_PLOT = r"E:\muruga\hgnn\data_diagnostics.png"
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+RAW_JSON_DIR = str(DATA_DIR / "dream_dataset")
+SAVE_FOLDER = str(DATA_DIR / "processed" / "dream")
+DIAGNOSTIC_PLOT = str(DATA_DIR / "processed" / "data_diagnostics.png")
 
 SEQ_LEN = 30  
 BATCH_SIZE = 64

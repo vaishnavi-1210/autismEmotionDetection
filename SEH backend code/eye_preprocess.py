@@ -8,9 +8,12 @@ from collections import Counter
 from sklearn.utils import resample, shuffle
 
 # ================= CONFIGURATION =================
-RAW_JSON_DIR = r"E:\muruga\data\DREAMdataset"
-SAVE_FOLDER = r"E:\muruga\hgnn\dream_gaze"
-DIAGNOSTIC_DIR = r"E:\muruga\hgnn\diagnostics"  # Added diagnostic folder
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+RAW_JSON_DIR = str(DATA_DIR / "dream_dataset")
+SAVE_FOLDER = str(DATA_DIR / "processed" / "dream_gaze")
+DIAGNOSTIC_DIR = str(DATA_DIR / "processed" / "diagnostics")  # Added diagnostic folder
 GAZE_FEATURES = ['rx', 'ry', 'rz'] 
 
 SEQ_LEN = 30  
