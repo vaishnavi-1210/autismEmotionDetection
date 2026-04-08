@@ -3,6 +3,7 @@ import mediapipe_compat  # Apply compatibility patches (from venv site-packages)
 import mediapipe as mp
 import numpy as np
 import json
+import sys
 from pathlib import Path
 
 def extract_coordinates_from_video(video_path, output_json_path):
@@ -95,8 +96,8 @@ def extract_coordinates_from_video(video_path, output_json_path):
                 add_point("wrist_right", lm[mp_pose.PoseLandmark.RIGHT_WRIST])
 
                 # Hands (using index finger)
-                add_point("hand_left", lm[mp_pose.PoseLandmark.LEFT_INDEX])
-                add_point("hand_right", lm[mp_pose.PoseLandmark.RIGHT_INDEX])
+                # add_point("hand_left", lm[mp_pose.PoseLandmark.LEFT_INDEX])
+                # add_point("hand_right", lm[mp_pose.PoseLandmark.RIGHT_INDEX])
 
             if mesh_results and mesh_results.multi_face_landmarks:
                 mesh_lm = mesh_results.multi_face_landmarks[0].landmark

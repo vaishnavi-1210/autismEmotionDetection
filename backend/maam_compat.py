@@ -73,7 +73,7 @@ def run_real_extraction(video_path, output_json):
         # Run as a SUBPROCESS for isolation
         # This prevents mediapipe from crashing the main FastAPI server
         # and lets us capture stderr directly.
-        python_exe = sys.executable or str(BASE_DIR / "backend" / "venv" / "Scripts" / "python.exe")
+        python_exe = str(BASE_DIR / "backend" / "venv" / "Scripts" / "python.exe")
         
         result = subprocess.run(
             [python_exe, str(patched_script_path)],
@@ -150,7 +150,7 @@ def run_modality_pipeline(modality, session_id):
         # 2. LSTM & FE (lstm.py Class + fe.py Logic)
         fe_mod = get_maam_module(f"{modality}_fe")
 
-        name_map = {'sk': 'skeleton', 'eye': 'gaze', 'head': 'head'}
+        name_map = {'sk': 'skeleton', 'eye': 'eye', 'head': 'head'}
         weights_path = MODELS_DIR / f"bilstm_{name_map[modality]}_model.pth"
 
         input_dim = 40 if modality == 'sk' else 3
@@ -194,9 +194,12 @@ def extract_coordinates_and_animate(video_path, session_id):
     """
     from config import PROCESSED_DIR, ANIMATIONS_DIR
 
-    # Add root directory to path so we can import video_to_coordinates and 2d_animation
+    # Add root and backend directories to path so we can import video_to_coordinates and 2d_animation
+    backend_dir = BASE_DIR / "backend"
     if str(ROOT_DIR) not in sys.path:
         sys.path.insert(0, str(ROOT_DIR))
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
 
     try:
         # Step 1: Extract coordinates using root-level video_to_coordinates.py

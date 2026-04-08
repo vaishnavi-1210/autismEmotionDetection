@@ -29,7 +29,7 @@ ALLOWED_FORMATS = {".mp4", ".avi", ".mov", ".mkv"}
 HGNN_MODEL_PATH = MODELS_DIR / "triple_fusion_hgnn_final.pth"
 # BiLSTM models paths - will use fallback if not found
 SK_MODEL_PATH = MODELS_DIR / "bilstm_skeleton_model.pth"
-EYE_MODEL_PATH = MODELS_DIR / "bilstm_gaze_model.pth"
+EYE_MODEL_PATH = MODELS_DIR / "bilstm_eye_model.pth"
 HEAD_MODEL_PATH = MODELS_DIR / "bilstm_head_model.pth"
 
 # Processing settings
