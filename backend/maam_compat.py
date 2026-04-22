@@ -175,7 +175,7 @@ def run_modality_pipeline(modality, session_id):
                 checkpoint = torch.load(weights_path, map_location="cpu")
                 state_dict = checkpoint.get("model_state_dict", checkpoint)
                 model.load_state_dict(state_dict)
-                print(f"[✓] Loaded model weights: {weights_path}")
+                print(f"[OK] Loaded model weights: {weights_path}")
             except Exception as e:
                 print(f"[WARN] Could not load model {weights_path}: {e}. Using untrained model.")
         else:
@@ -185,7 +185,7 @@ def run_modality_pipeline(modality, session_id):
         with torch.no_grad():
             # Forward pass
             features = model(X_tensor)
-            print(f"[✓] {modality.upper()} extracted: input shape {X_tensor.shape}, output shape {features.shape}")
+            print(f"[OK] {modality.upper()} extracted: input shape {X_tensor.shape}, output shape {features.shape}")
             return features.cpu().numpy()[0]
     except Exception as e:
         print(f"[ERROR] Feature extraction failed for {modality}: {e}")
@@ -193,19 +193,20 @@ def run_modality_pipeline(modality, session_id):
         raise
 
 
-def extract_coordinates_and_animate(video_path, session_id):
-    """Extract coordinates from video and generate 2D animation
+def extract_coordinates_and_animate(video_path, session_id, progress_callback=None):
+    """Extract coordinates using dream flow and publish skeleton animation
 
     Args:
         video_path: Path to input video
         session_id: Session ID for organizing output
+        progress_callback: Optional callback(percent, message) for stage progress updates
 
     Returns:
         tuple: (coordinates_json_path, animation_video_path) or (None, None) on failure
     """
     from config import PROCESSED_DIR, ANIMATIONS_DIR
 
-    # Add root and backend directories to path so we can import video_to_coordinates and 2d_animation
+    # Add root and backend directories to path so we can import video_to_coordinates.
     backend_dir = BASE_DIR / "backend"
     if str(ROOT_DIR) not in sys.path:
         sys.path.insert(0, str(ROOT_DIR))
@@ -213,39 +214,60 @@ def extract_coordinates_and_animate(video_path, session_id):
         sys.path.insert(0, str(backend_dir))
 
     try:
-        # Step 1: Extract coordinates using root-level video_to_coordinates.py
-        print(f"[{session_id}] 📹 Loading video_to_coordinates module...")
+        def report_progress(percent, message):
+            if not callable(progress_callback):
+                return
+            try:
+                progress_callback(float(percent), message)
+            except Exception:
+                # Progress reporting must never break processing.
+                pass
+
+        # Step 1: Extract coordinates and dream-style videos.
+        print(f"[{session_id}] Loading video_to_coordinates module...")
+        report_progress(2, "Loading coordinate extraction module")
         import video_to_coordinates as coord_module
 
         processed_dir = PROCESSED_DIR / session_id
         processed_dir.mkdir(parents=True, exist_ok=True)
         coord_json_path = processed_dir / "coordinates.json"
 
-        print(f"[{session_id}] 📹 Extracting coordinates from video...")
-        success = coord_module.extract_coordinates_from_video(str(video_path), str(coord_json_path))
+        print(f"[{session_id}] Extracting coordinates from video...")
 
-        if not success or not coord_json_path.exists():
+        def coordinate_progress(percent, message):
+            # Coordinate extraction is 2% -> 65% of this stage.
+            stage_percent = 2 + (max(0.0, min(percent, 100.0)) / 100.0) * 63.0
+            report_progress(stage_percent, message)
+
+        success = coord_module.extract_coordinates_from_video(
+            str(video_path),
+            str(coord_json_path),
+            progress_callback=coordinate_progress,
+        )
+
+        skeleton_video_path = processed_dir / "skeleton.mp4"
+
+        if not success or not coord_json_path.exists() or not skeleton_video_path.exists():
             raise Exception("Coordinate extraction failed")
 
-        # Step 2: Generate 2D animation using root-level 2d_animation.py
-        print(f"[{session_id}] 🎬 Loading 2d_animation module...")
-        import importlib
-        anim_module = importlib.import_module('2d_animation')
+        # Step 2: Publish skeleton video as the session animation artifact.
+        print(f"[{session_id}] Publishing dream skeleton animation...")
+        report_progress(80, "Publishing dream skeleton animation")
+        import shutil
 
         anim_dir = ANIMATIONS_DIR / session_id
         anim_dir.mkdir(parents=True, exist_ok=True)
         animation_path = anim_dir / "behavior_animation.mp4"
 
-        print(f"[{session_id}] 🎬 Generating 2D behavior animation...")
-        success = anim_module.generate_2d_animation(str(processed_dir), str(animation_path))
+        shutil.copyfile(skeleton_video_path, animation_path)
+        if not animation_path.exists():
+            raise Exception("Animation publish failed")
 
-        if not success or not animation_path.exists():
-            raise Exception("Animation generation failed")
-
-        print(f"[{session_id}] ✅ Animation ready at: {animation_path}")
+        report_progress(100, "Coordinate extraction and animation complete")
+        print(f"[{session_id}] Animation ready at: {animation_path}")
         return str(coord_json_path), str(animation_path)
 
     except Exception as e:
-        print(f"[{session_id}] ❌ Coordinate extraction/animation error: {e}")
+        print(f"[{session_id}] Coordinate extraction/animation error: {e}")
         traceback.print_exc()
         return None, None

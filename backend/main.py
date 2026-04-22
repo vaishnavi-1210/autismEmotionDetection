@@ -179,14 +179,24 @@ async def get_status(session_id: str):
         if not session_metadata:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        return {
+        payload = {
             "session_id": session_id,
             "status": session_metadata.get("status"),
             "created_at": session_metadata.get("created_at"),
             "start_time": session_metadata.get("start_time"),
             "end_time": session_metadata.get("end_time"),
-            "error": session_metadata.get("error")
+            "error": session_metadata.get("error"),
+            "progress": session_metadata.get("progress", 0),
+            "current_stage": session_metadata.get("current_stage", "")
         }
+
+        return JSONResponse(
+            content=payload,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
 
     except HTTPException:
         raise
@@ -209,7 +219,13 @@ async def get_results(session_id: str):
         with open(prediction_file, 'r') as f:
             results = json.load(f)
 
-        return results
+        return JSONResponse(
+            content=results,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
 
     except HTTPException:
         raise
@@ -333,7 +349,11 @@ async def get_animation(session_id: str):
         return FileResponse(
             anim_file,
             media_type="video/mp4",
-            filename=f"behavior_animation_{session_id}.mp4"
+            filename=f"behavior_animation_{session_id}.mp4",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
         )
     except HTTPException:
         raise

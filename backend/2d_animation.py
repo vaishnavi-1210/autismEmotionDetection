@@ -14,8 +14,17 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter
 from pathlib import Path
 
 
-def generate_2d_animation(json_folder, output_video_path):
+def generate_2d_animation(json_folder, output_video_path, progress_callback=None):
     try:
+        def report_progress(percent, message):
+            if not callable(progress_callback):
+                return
+            try:
+                progress_callback(float(percent), message)
+            except Exception:
+                # Progress updates should never interrupt animation export.
+                pass
+
         CONF_THRESHOLD = 0.5
 
         # LOAD JSON
@@ -115,11 +124,25 @@ def generate_2d_animation(json_folder, output_video_path):
         Path(output_video_path).parent.mkdir(parents=True, exist_ok=True)
 
         print("🎬 Saving animation...")
+        report_progress(0, "Preparing animation export")
+
+        last_report_bucket = -1
+
+        def mpl_progress_callback(current_frame, total_frames):
+            nonlocal last_report_bucket
+            if total_frames is None or total_frames <= 0:
+                return
+            percent = ((current_frame + 1) / total_frames) * 100.0
+            bucket = int(percent // 5)
+            if bucket > last_report_bucket:
+                last_report_bucket = bucket
+                report_progress(percent, f"Rendering animation ({current_frame + 1}/{total_frames} frames)")
 
         writer = FFMpegWriter(fps=fps, bitrate=1800)
-        anim.save(output_video_path, writer=writer)
+        anim.save(output_video_path, writer=writer, progress_callback=mpl_progress_callback)
 
         plt.close()
+        report_progress(100, "Animation export complete")
         print("✅ Animation created successfully")
         return True
 

@@ -1,25 +1,22 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import {
+  Alert,
   Box,
   Button,
-  Typography,
   Card,
-  LinearProgress,
-  Alert,
-  List,
-  ListItem,
-  ListItemText,
-  CircularProgress,
   Chip,
-  Grid,
+  CircularProgress,
   Dialog,
-  DialogTitle,
-  DialogContent,
   DialogActions,
+  DialogContent,
+  DialogTitle,
+  Fade,
   IconButton,
+  LinearProgress,
+  Stack,
+  Typography,
 } from '@mui/material'
-import CloseIcon from '@mui/icons-material/Close'
 
 interface UploadResponse {
   session_id: string
@@ -49,505 +46,764 @@ interface PredictionResult {
   }
 }
 
-export const VideoUpload: React.FC = () => {
-  const [files, setFiles] = useState<File[]>([])
-  const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [uploadedSessions, setUploadedSessions] = useState<UploadResponse[]>([])
-  const [processingStatus, setProcessingStatus] = useState<{
-    [key: string]: ProcessingStatus
-  }>({})
-  const [predictions, setPredictions] = useState<{
-    [key: string]: PredictionResult
-  }>({})
-  const [pollingInterval, setPollingInterval] = useState<{
-    [key: string]: ReturnType<typeof setInterval>
-  }>({})
-  const [animationDialogOpen, setAnimationDialogOpen] = useState<{
-    [key: string]: boolean
-  }>({})
+// 4-stage pipeline configuration
+const PIPELINE_STAGES = [
+  { name: 'Upload', minProgress: 0, maxProgress: 25, label: 'Uploading video...' },
+  { name: 'Extraction', minProgress: 25, maxProgress: 50, label: 'Extracting coordinates & generating animation...' },
+  { name: 'Features', minProgress: 50, maxProgress: 85, label: 'Extracting features (skeleton, eye, head)...' },
+  { name: 'Classification', minProgress: 85, maxProgress: 100, label: 'Running HGNN classification...' },
+]
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    setFiles(acceptedFiles)
-    setMessage(null)
+const UPLOAD_WEIGHT = 25
+
+export const VideoUpload: React.FC = () => {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [overallProgress, setOverallProgress] = useState(0)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const [session, setSession] = useState<UploadResponse | null>(null)
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null)
+  const [prediction, setPrediction] = useState<PredictionResult | null>(null)
+
+  const [animationDialogOpen, setAnimationDialogOpen] = useState(false)
+  const [animationNonce, setAnimationNonce] = useState<number>(Date.now())
+  const [animationError, setAnimationError] = useState<string | null>(null)
+  const [resultDialogOpen, setResultDialogOpen] = useState(false)
+  const [progressDialogOpen, setProgressDialogOpen] = useState(false)
+
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const clearPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
   }, [])
+
+  useEffect(() => {
+    return () => {
+      clearPolling()
+    }
+  }, [clearPolling])
+
+  const resetStateForNewFile = useCallback(() => {
+    clearPolling()
+    setSession(null)
+    setProcessingStatus(null)
+    setPrediction(null)
+    setOverallProgress(0)
+    setResultDialogOpen(false)
+    setAnimationDialogOpen(false)
+    setProgressDialogOpen(false)
+    setMessage(null)
+  }, [clearPolling])
+
+  const onDrop = useCallback(
+    (acceptedFiles: File[]) => {
+      const nextFile = acceptedFiles[0] ?? null
+      setSelectedFile(nextFile)
+      if (nextFile) {
+        resetStateForNewFile()
+      }
+    },
+    [resetStateForNewFile],
+  )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    multiple: false,
+    maxFiles: 1,
     accept: {
-      'video/*': ['.mp4'],
+      'video/mp4': ['.mp4'],
+      'video/x-msvideo': ['.avi'],
+      'video/quicktime': ['.mov'],
+      'video/x-matroska': ['.mkv'],
     },
   })
 
-  // Poll for processing status
-  const pollStatus = async (sessionId: string) => {
-    try {
-      const response = await fetch(`/api/v1/status/${sessionId}`)
-      const status: ProcessingStatus = await response.json()
+  // Calculate progress for each stage
+  const stageProgress = useMemo(() => {
+    return PIPELINE_STAGES.map((stage) => {
+      const stageRange = stage.maxProgress - stage.minProgress
+      if (overallProgress < stage.minProgress) {
+        return 0
+      }
+      if (overallProgress >= stage.maxProgress) {
+        return 100
+      }
+      return ((overallProgress - stage.minProgress) / stageRange) * 100
+    })
+  }, [overallProgress])
 
-      setProcessingStatus((prev) => ({
-        ...prev,
-        [sessionId]: status,
-      }))
+  const currentStageIndex = useMemo(() => {
+    for (let i = PIPELINE_STAGES.length - 1; i >= 0; i--) {
+      if (overallProgress >= PIPELINE_STAGES[i].minProgress) {
+        return i
+      }
+    }
+    return 0
+  }, [overallProgress])
 
-      if (status.status === 'completed') {
-        // Fetch results
-        const resultsResponse = await fetch(`/api/v1/results/${sessionId}`)
-        const results: PredictionResult = await resultsResponse.json()
+  const updateProcessingProgress = useCallback((reportedProgress?: number) => {
+    setOverallProgress((prev) => {
+      if (typeof reportedProgress === 'number' && Number.isFinite(reportedProgress)) {
+        const normalized = Math.max(0, Math.min(reportedProgress, 100))
+        const mapped = UPLOAD_WEIGHT + (normalized / 100) * (100 - UPLOAD_WEIGHT)
+        return Math.max(prev, Math.min(mapped, 99))
+      }
 
-        setPredictions((prev) => ({
-          ...prev,
-          [sessionId]: results,
-        }))
+      return Math.max(prev, UPLOAD_WEIGHT)
+    })
+  }, [])
 
-        // Stop polling
-        if (pollingInterval[sessionId]) {
-          clearInterval(pollingInterval[sessionId])
-          setPollingInterval((prev) => {
-            const updated = { ...prev }
-            delete updated[sessionId]
-            return updated
-          })
+  const inferProgressFromStage = useCallback((status: ProcessingStatus): number | undefined => {
+    if (typeof status.progress === 'number' && Number.isFinite(status.progress)) {
+      return status.progress
+    }
+
+    const stage = (status.current_stage || '').toLowerCase()
+    if (!stage) {
+      return undefined
+    }
+
+    if (stage.includes('complete')) return 100
+    if (stage.includes('hgnn') || stage.includes('classif')) return 92
+    if (stage.includes('head')) return 64
+    if (stage.includes('eye')) return 50
+    if (stage.includes('skeleton')) return 34
+    if (stage.includes('animation ready') || stage.includes('landmarks extracted')) return 33
+    if (stage.includes('extract') || stage.includes('landmark')) return 10
+    return undefined
+  }, [])
+
+  const openAnimationDialog = useCallback(() => {
+    setAnimationError(null)
+    setAnimationNonce(Date.now())
+    setAnimationDialogOpen(true)
+  }, [])
+
+  const pollStatus = useCallback(
+    async (sessionId: string) => {
+      try {
+        const response = await fetch(`/api/v1/status/${sessionId}`, { cache: 'no-store' })
+        if (!response.ok) {
+          throw new Error(`Status error: ${response.status}`)
         }
 
-        setMessage({
-          type: 'success',
-          text: `✅ Behavior Analysis Complete! Class: ${results.emotion_class}`,
-        })
-      } else if (status.status === 'failed') {
-        if (pollingInterval[sessionId]) {
-          clearInterval(pollingInterval[sessionId])
-          setPollingInterval((prev) => {
-            const updated = { ...prev }
-            delete updated[sessionId]
-            return updated
-          })
+        const status: ProcessingStatus = await response.json()
+        setProcessingStatus(status)
+
+        if (status.status === 'processing' || status.status === 'uploaded') {
+          updateProcessingProgress(inferProgressFromStage(status))
+          setProgressDialogOpen(true)
+          return
         }
 
+        if (status.status === 'completed') {
+          clearPolling()
+          setOverallProgress(100)
+          setProgressDialogOpen(false)
+
+          const resultsResponse = await fetch(`/api/v1/results/${sessionId}`, { cache: 'no-store' })
+          if (!resultsResponse.ok) {
+            throw new Error(`Result fetch error: ${resultsResponse.status}`)
+          }
+
+          const resultPayload: PredictionResult = await resultsResponse.json()
+          setPrediction(resultPayload)
+          setResultDialogOpen(true)
+          setMessage({
+            type: 'success',
+            text: 'Analysis complete. Final model prediction is ready.',
+          })
+          return
+        }
+
+        if (status.status === 'failed') {
+          clearPolling()
+          setProgressDialogOpen(false)
+          setMessage({
+            type: 'error',
+            text: `Processing failed: ${status.error || 'Unknown error'}`,
+          })
+        }
+      } catch (error) {
+        clearPolling()
+        setProgressDialogOpen(false)
         setMessage({
           type: 'error',
-          text: `❌ Processing failed: ${status.error || 'Unknown error'}`,
+          text: `Status polling failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         })
       }
-    } catch (error) {
-      console.error('Error polling status:', error)
-    }
-  }
+    },
+    [clearPolling, inferProgressFromStage, updateProcessingProgress],
+  )
 
-  // Start polling when upload completes
-  useEffect(() => {
-    uploadedSessions.forEach((session) => {
-      if (!pollingInterval[session.session_id]) {
-        const interval = setInterval(() => {
-          pollStatus(session.session_id)
-        }, 2000) // Poll every 2 seconds
-
-        setPollingInterval((prev) => ({
-          ...prev,
-          [session.session_id]: interval,
-        }))
-
-        // Initial poll
-        pollStatus(session.session_id)
+  const startPolling = useCallback(
+    (sessionId: string) => {
+      if (pollRef.current) {
+        return
       }
-    })
 
-    return () => {
-      Object.values(pollingInterval).forEach(clearInterval)
-    }
-  }, [uploadedSessions])
+      pollRef.current = setInterval(() => {
+        void pollStatus(sessionId)
+      }, 1000)
+
+      void pollStatus(sessionId)
+    },
+    [pollStatus],
+  )
 
   const handleUpload = async () => {
-    if (files.length === 0) {
-      setMessage({ type: 'error', text: 'Please select a video file' })
+    if (!selectedFile) {
+      setMessage({ type: 'error', text: 'Please select a video file first.' })
       return
     }
 
+    clearPolling()
     setUploading(true)
-    setProgress(0)
+    setMessage(null)
+    setSession(null)
+    setProcessingStatus(null)
+    setPrediction(null)
+    setResultDialogOpen(false)
+    setAnimationDialogOpen(false)
+    setProgressDialogOpen(true)
+    setOverallProgress(0)
+
+    const formData = new FormData()
+    formData.append('file', selectedFile)
+
+    const xhr = new XMLHttpRequest()
 
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const formData = new FormData()
-        formData.append('file', file)
-
-        const xhr = new XMLHttpRequest()
-
-        xhr.upload.addEventListener('loadstart', () => {
-          setProgress((i / files.length) * 100)
-        })
-
+      const uploadResponse = await new Promise<UploadResponse>((resolve, reject) => {
         xhr.upload.addEventListener('progress', (event) => {
-          if (event.lengthComputable) {
-            const percentComplete = (event.loaded / event.total) * 100
-            setProgress((i / files.length) * 100 + percentComplete / files.length)
+          if (!event.lengthComputable) {
+            return
           }
+
+          const uploadPercent = (event.loaded / event.total) * 100
+          const mappedProgress = (uploadPercent / 100) * UPLOAD_WEIGHT
+          setOverallProgress((prev) => Math.max(prev, mappedProgress))
         })
 
-        await new Promise((resolve, reject) => {
-          xhr.addEventListener('load', () => {
-            if (xhr.status === 200) {
-              const response: UploadResponse = JSON.parse(xhr.responseText)
-              setUploadedSessions((prev) => [...prev, response])
-              setMessage({
-                type: 'success',
-                text: `✅ Video uploaded! Analyzing behavior...`,
-              })
-              resolve(null)
-            } else {
-              reject(new Error(`Upload failed: ${xhr.statusText}`))
-            }
-          })
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const response: UploadResponse = JSON.parse(xhr.responseText)
+            resolve(response)
+            return
+          }
 
-          xhr.addEventListener('error', () => {
-            reject(new Error('Upload error'))
-          })
-
-          xhr.open('POST', '/api/v1/upload')
-          xhr.send(formData)
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
         })
-      }
 
-      setFiles([])
-      setProgress(100)
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error during upload.'))
+        })
+
+        xhr.open('POST', '/api/v1/upload')
+        xhr.send(formData)
+      })
+
+      setSession(uploadResponse)
+      setProcessingStatus({
+        session_id: uploadResponse.session_id,
+        status: uploadResponse.status || 'processing',
+        created_at: new Date().toISOString(),
+      })
+      setOverallProgress((prev) => Math.max(prev, UPLOAD_WEIGHT))
+      startPolling(uploadResponse.session_id)
     } catch (error) {
+      setProgressDialogOpen(false)
       setMessage({
         type: 'error',
-        text: `❌ Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: `Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
       })
     } finally {
       setUploading(false)
     }
   }
 
-  const getBehaviorColor = (classLabel: string): 'error' | 'warning' | 'success' => {
-    switch (classLabel) {
-      case 'JA':
-        return 'success'
-      case 'IM':
-        return 'warning'
-      case 'TT':
-        return 'error'
-      default:
-        return 'warning'
+  const handleReset = () => {
+    if (uploading || processingStatus?.status === 'processing') {
+      return
     }
+
+    setSelectedFile(null)
+    resetStateForNewFile()
   }
 
+  const stageText = useMemo(() => {
+    if (uploading) {
+      return 'Uploading video'
+    }
+
+    if (processingStatus?.status === 'processing') {
+      return processingStatus.current_stage || 'Running model inference pipeline'
+    }
+
+    if (processingStatus?.status === 'completed') {
+      return 'Analysis completed'
+    }
+
+    if (processingStatus?.status === 'failed') {
+      return 'Processing failed'
+    }
+
+    if (session) {
+      return 'Preparing analysis'
+    }
+
+    return 'Waiting for file upload'
+  }, [uploading, processingStatus, session])
+
+  const currentStatus = processingStatus?.status
+  const isBusy = uploading || currentStatus === 'processing'
+  const shouldShowProgress = isBusy || overallProgress > 0
+  const backendProgress = processingStatus?.progress ?? 0
+  const animationReady = Boolean(
+    session
+      && (
+        processingStatus?.status === 'completed'
+        || (processingStatus?.status === 'processing' && backendProgress >= 33)
+      ),
+  )
+  const animationSrc = session
+    ? `/api/v1/animation/${session.session_id}?v=${animationNonce}`
+    : ''
+
+  const predictedClassTone = useMemo(() => {
+    if (!prediction?.emotion_class) {
+      return {
+        background: 'rgba(31, 58, 95, 0.08)',
+        borderColor: 'rgba(31, 58, 95, 0.22)',
+        textColor: '#1f3a5f',
+      }
+    }
+
+    switch (prediction.emotion_class) {
+      case 'JA':
+        return {
+          background: 'rgba(42, 157, 143, 0.14)',
+          borderColor: 'rgba(42, 157, 143, 0.45)',
+          textColor: '#1f6059',
+        }
+      case 'IM':
+        return {
+          background: 'rgba(227, 160, 8, 0.14)',
+          borderColor: 'rgba(227, 160, 8, 0.45)',
+          textColor: '#6f5400',
+        }
+      case 'TT':
+        return {
+          background: 'rgba(203, 67, 53, 0.12)',
+          borderColor: 'rgba(203, 67, 53, 0.4)',
+          textColor: '#7e2f26',
+        }
+      default:
+        return {
+          background: 'rgba(31, 58, 95, 0.08)',
+          borderColor: 'rgba(31, 58, 95, 0.22)',
+          textColor: '#1f3a5f',
+        }
+    }
+  }, [prediction?.emotion_class])
+
   return (
-    <Box sx={{ py: 4 }}>
-      <Card sx={{ p: 4, borderRadius: 2 }}>
-        <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
-          📹 Upload Video for Behavior Analysis
-        </Typography>
-
-        <Box
-          {...getRootProps()}
-          sx={{
-            border: '2px dashed #1976d2',
-            borderRadius: 2,
-            p: 4,
-            textAlign: 'center',
-            backgroundColor: isDragActive ? '#e3f2fd' : '#f5f5f5',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              backgroundColor: '#e3f2fd',
-              borderColor: '#1565c0',
-            },
-          }}
-        >
-          <input {...getInputProps()} />
-          <Typography sx={{ fontSize: 48, color: '#1976d2', mb: 2, lineHeight: 1 }}>☁️⬆️</Typography>
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {isDragActive ? 'Drop video here' : 'Drag & drop video here'}
-          </Typography>
-          <Typography variant="body2" color="textSecondary">
-            or click to select file
-          </Typography>
-          <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 1 }}>
-            MP4 format recommended (Max 500MB, 10 minutes)
-          </Typography>
-        </Box>
-
-        {files.length > 0 && (
-          <Box sx={{ mt: 3 }}>
-            <Typography variant="subtitle2" sx={{ mb: 2 }}>
-              Selected File:
+    <Box sx={{ py: { xs: 1, md: 2 } }}>
+      <Card sx={{ p: { xs: 2.25, md: 3.5 }, borderRadius: 4 }}>
+        <Stack spacing={2.5}>
+          <Box>
+            <Typography variant="h5" sx={{ fontWeight: 800, mb: 0.6 }}>
+              Upload and Analyze
             </Typography>
-            <List>
-              {files.map((file, index) => (
-                <ListItem key={index}>
-                  <ListItemText
-                    primary={file.name}
-                    secondary={`${(file.size / (1024 * 1024)).toFixed(2)} MB`}
-                  />
-                </ListItem>
-              ))}
-            </List>
+            <Typography variant="body2" color="text.secondary">
+              Single-flow experience: one upload, one progress dialog, one final prediction.
+            </Typography>
           </Box>
-        )}
 
-        {uploading && (
-          <Box sx={{ mt: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <CircularProgress size={24} />
-              <Box sx={{ flex: 1 }}>
-                <LinearProgress variant="determinate" value={progress} />
-              </Box>
-              <Typography variant="body2">{Math.round(progress)}%</Typography>
-            </Box>
-          </Box>
-        )}
-
-        {message && (
-          <Alert severity={message.type} sx={{ mt: 3 }}>
-            {message.text}
-          </Alert>
-        )}
-
-        <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={handleUpload}
-            disabled={files.length === 0 || uploading}
-            size="large"
-          >
-            {uploading ? 'Uploading...' : 'Upload & Analyze'}
-          </Button>
-          <Button
-            variant="outlined"
-            onClick={() => {
-              setFiles([])
-              setMessage(null)
+          <Box
+            {...getRootProps()}
+            sx={{
+              border: '1.5px dashed',
+              borderColor: isDragActive ? 'secondary.main' : 'rgba(31,58,95,0.25)',
+              borderRadius: 3,
+              p: { xs: 3, md: 4 },
+              textAlign: 'center',
+              background: isDragActive
+                ? 'linear-gradient(135deg, rgba(42,157,143,0.08), rgba(42,157,143,0.02))'
+                : 'linear-gradient(135deg, rgba(31,58,95,0.04), rgba(255,255,255,0.6))',
+              cursor: 'pointer',
+              transition: 'all 220ms ease',
+              '&:hover': {
+                borderColor: 'secondary.main',
+                transform: 'translateY(-2px)',
+              },
             }}
-            disabled={uploading}
           >
-            Clear
-          </Button>
-        </Box>
-
-        {uploadedSessions.length > 0 && (
-          <Box sx={{ mt: 4 }}>
-            <Typography variant="h6" sx={{ mb: 3 }}>
-              🎯 Analysis Results
+            <input {...getInputProps()} />
+            <Box
+              sx={{
+                width: 56,
+                height: 56,
+                borderRadius: '50%',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 24,
+                fontWeight: 700,
+                color: 'primary.main',
+                backgroundColor: 'rgba(31,58,95,0.1)',
+                mb: 1,
+              }}
+            >
+              UP
+            </Box>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+              {isDragActive ? 'Drop your video here' : 'Drag and drop your video'}
             </Typography>
-
-            {uploadedSessions.map((session) => {
-              const status = processingStatus[session.session_id]
-              const prediction = predictions[session.session_id]
-              const isProcessing = status?.status === 'processing'
-              const isCompleted = status?.status === 'completed'
-              const isFailed = status?.status === 'failed'
-
-              return (
-                <Card key={session.session_id} sx={{ p: 3, mb: 3, backgroundColor: '#f9f9f9' }}>
-                  <Grid container spacing={2} sx={{ mb: 2 }}>
-                    <Grid item xs={12} sm={6}>
-                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                        Session ID
-                      </Typography>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                        {session.session_id.substring(0, 8)}...
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                        Status
-                      </Typography>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {isProcessing && (
-                          <>
-                            <CircularProgress size={18} thickness={5} />
-                            <Typography variant="body2">Processing...</Typography>
-                          </>
-                        )}
-                        {isCompleted && (
-                          <>
-                            <Typography sx={{ fontSize: 18, lineHeight: 1 }}>✅</Typography>
-                            <Typography variant="body2">Complete</Typography>
-                          </>
-                        )}
-                        {isFailed && (
-                          <>
-                            <Typography sx={{ fontSize: 18, lineHeight: 1 }}>❌</Typography>
-                            <Typography variant="body2">Failed</Typography>
-                          </>
-                        )}
-                      </Box>
-                    </Grid>
-                  </Grid>
-
-                  {isProcessing && status?.current_stage && (
-                    <Box sx={{ mt: 2, mb: 2 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                        <Typography variant="caption" color="textSecondary">
-                          {status.current_stage}
-                        </Typography>
-                        <Typography variant="caption" color="textSecondary">
-                          {status.progress || 0}%
-                        </Typography>
-                      </Box>
-                      <LinearProgress
-                        variant="determinate"
-                        value={status.progress || 0}
-                        sx={{ height: 8, borderRadius: 4 }}
-                      />
-                    </Box>
-                  )}
-
-                  {/* Animation Display Section - Shows when extraction complete */}
-                  {(isProcessing || isCompleted) && (
-                    <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid #ddd' }}>
-                      <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                        🎬 Behavior Animation
-                      </Typography>
-                      <Button
-                        variant="contained"
-                        color="info"
-                        onClick={() =>
-                          setAnimationDialogOpen((prev) => ({
-                            ...prev,
-                            [session.session_id]: true,
-                          }))
-                        }
-                        sx={{ width: '100%', mb: 2 }}
-                      >
-                        View Animation
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        href={`/api/v1/animation/${session.session_id}`}
-                        download={`behavior_animation_${session.session_id}.mp4`}
-                        sx={{ width: '100%' }}
-                      >
-                        ⬇️ Download Animation
-                      </Button>
-                    </Box>
-                  )}
-
-                  {/* Animation Modal */}
-                  <Dialog
-                    open={animationDialogOpen[session.session_id] || false}
-                    onClose={() =>
-                      setAnimationDialogOpen((prev) => ({
-                        ...prev,
-                        [session.session_id]: false,
-                      }))
-                    }
-                    maxWidth="md"
-                    fullWidth
-                  >
-                    <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography>2D Behavior Animation</Typography>
-                      <IconButton
-                        onClick={() =>
-                          setAnimationDialogOpen((prev) => ({
-                            ...prev,
-                            [session.session_id]: false,
-                          }))
-                        }
-                      >
-                        <CloseIcon />
-                      </IconButton>
-                    </DialogTitle>
-                    <DialogContent dividers>
-                      <video
-                        width="100%"
-                        controls
-                        style={{ borderRadius: '8px', backgroundColor: '#000' }}
-                      >
-                        <source src={`/api/v1/animation/${session.session_id}`} type="video/mp4" />
-                        Your browser does not support the video tag.
-                      </video>
-                    </DialogContent>
-                  </Dialog>
-
-                  {/* Results Section - Shows when analysis complete */}
-                  {isCompleted && prediction && (
-                    <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid #ddd' }}>
-                      <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 600 }}>
-                        📊 Behavior Classification
-                      </Typography>
-
-                      <Box sx={{ mb: 3 }}>
-                        <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-                          Predicted Behavior Class:
-                        </Typography>
-                        <Chip
-                          label={prediction.emotion_class}
-                          color={getBehaviorColor(prediction.emotion_class)}
-                          sx={{ fontSize: 16, padding: '20px 10px' }}
-                        />
-                      </Box>
-
-                      <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                        Confidence Breakdown:
-                      </Typography>
-
-                      <Grid container spacing={2} sx={{ mb: 3 }}>
-                        {Object.entries(prediction.confidence_scores).map(([className, score]) => (
-                          <Grid item xs={12} sm={6} md={4} key={className}>
-                            <Card sx={{ p: 2, backgroundColor: '#f5f5f5' }}>
-                              <Typography variant="caption" color="textSecondary">
-                                {className}
-                              </Typography>
-                              <Box sx={{ mt: 1 }}>
-                                <LinearProgress variant="determinate" value={score * 100} />
-                              </Box>
-                              <Typography variant="body2" sx={{ mt: 1, textAlign: 'right' }}>
-                                {(score * 100).toFixed(2)}%
-                              </Typography>
-                            </Card>
-                          </Grid>
-                        ))}
-                      </Grid>
-
-                      <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                        📥 Export Results
-                      </Typography>
-                      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          href={`/api/v1/coordinates/${session.session_id}`}
-                          download={`coordinates_${session.session_id}.json`}
-                        >
-                          Landmarks
-                        </Button>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          href={`/api/v1/features/${session.session_id}`}
-                          download={`features_${session.session_id}.zip`}
-                        >
-                          Features
-                        </Button>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          href={`/api/v1/export/${session.session_id}?format=json`}
-                          download={`results_${session.session_id}.json`}
-                        >
-                          Results
-                        </Button>
-                      </Box>
-                    </Box>
-                  )}
-
-                  {isFailed && status?.error && (
-                    <Alert severity="error" sx={{ mt: 2 }}>
-                      {status.error}
-                    </Alert>
-                  )}
-                </Card>
-              )
-            })}
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.7 }}>
+              or click to browse. Supports MP4, AVI, MOV, MKV.
+            </Typography>
           </Box>
-        )}
+
+          {selectedFile && (
+            <Card
+              variant="outlined"
+              sx={{
+                px: 2,
+                py: 1.4,
+                borderRadius: 2.5,
+                borderColor: 'rgba(31,58,95,0.2)',
+                backgroundColor: 'rgba(255,255,255,0.72)',
+              }}
+            >
+              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+                <Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    Selected Video
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedFile.name} ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
+                  </Typography>
+                </Box>
+                <Chip size="small" label="Ready" color="primary" variant="outlined" />
+              </Stack>
+            </Card>
+          )}
+
+          <Box sx={{ display: 'flex', gap: 1.4, flexWrap: 'wrap' }}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="large"
+              onClick={handleUpload}
+              disabled={!selectedFile || isBusy}
+              startIcon={isBusy ? <CircularProgress color="inherit" size={16} /> : undefined}
+              sx={{ minWidth: 170 }}
+            >
+              {isBusy ? 'Processing' : 'Start Analysis'}
+            </Button>
+            <Button variant="outlined" size="large" onClick={handleReset} disabled={isBusy}>
+              Reset
+            </Button>
+          </Box>
+
+          {shouldShowProgress && !progressDialogOpen && (
+            <Card
+              variant="outlined"
+              sx={{
+                p: 2,
+                borderRadius: 2.5,
+                borderColor: 'rgba(31,58,95,0.18)',
+                background: 'linear-gradient(135deg, rgba(31,58,95,0.04), rgba(42,157,143,0.03))',
+              }}
+            >
+              <Stack spacing={1.2}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    {stageText}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ minWidth: 48, textAlign: 'right' }}>
+                    {Math.round(overallProgress)}%
+                  </Typography>
+                </Box>
+                <LinearProgress
+                  variant="determinate"
+                  value={overallProgress}
+                  sx={{
+                    height: 9,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(31,58,95,0.12)',
+                    '& .MuiLinearProgress-bar': {
+                      borderRadius: 8,
+                      transition: 'transform 450ms ease',
+                    },
+                  }}
+                />
+                {session?.session_id && (
+                  <Typography variant="caption" color="text.secondary">
+                    Session: {session.session_id.slice(0, 10)}...
+                  </Typography>
+                )}
+              </Stack>
+            </Card>
+          )}
+
+          <Fade in={Boolean(message)}>
+            <Box>
+              {message && (
+                <Alert
+                  severity={message.type}
+                  sx={{
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: message.type === 'success' ? 'success.light' : 'error.light',
+                  }}
+                >
+                  {message.text}
+                </Alert>
+              )}
+            </Box>
+          </Fade>
+
+          {session && animationReady && (
+            <Box sx={{ display: 'flex', gap: 1.2, flexWrap: 'wrap' }}>
+              <Button variant="outlined" onClick={openAnimationDialog}>
+                View Animation
+              </Button>
+              <Button
+                variant="outlined"
+                href={`/api/v1/animation/${session.session_id}`}
+                download={`behavior_animation_${session.session_id}.mp4`}
+              >
+                Download Animation
+              </Button>
+              {processingStatus?.status === 'completed' && (
+                <Button variant="outlined" onClick={() => setResultDialogOpen(true)}>
+                  View Final Result
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                href={`/api/v1/export/${session.session_id}?format=json`}
+                download={`results_${session.session_id}.json`}
+                disabled={processingStatus?.status !== 'completed'}
+              >
+                Download Result
+              </Button>
+            </Box>
+          )}
+        </Stack>
       </Card>
+
+      {/* PROGRESS DIALOG - Shows all 4 stages */}
+      <Dialog open={progressDialogOpen} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1.5 }}>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>
+            Processing Progress
+          </Typography>
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={3} sx={{ pt: 2 }}>
+            {PIPELINE_STAGES.map((stage, index) => (
+              <Box key={stage.name}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.8 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                    <Box
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 14,
+                        fontWeight: 700,
+                        backgroundColor: stageProgress[index] === 100 ? '#2a9d8f' : index < currentStageIndex ? '#2a9d8f' : 'rgba(31,58,95,0.12)',
+                        color: stageProgress[index] === 100 || index < currentStageIndex ? 'white' : 'text.secondary',
+                      }}
+                    >
+                      {stageProgress[index] === 100 || index < currentStageIndex ? '✓' : index + 1}
+                    </Box>
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        {stage.name}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {/* Show current_stage if we're in this stage */}
+                        {index === currentStageIndex && processingStatus?.current_stage
+                          ? processingStatus.current_stage
+                          : stage.label}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                    {Math.round(stageProgress[index])}%
+                  </Typography>
+                </Box>
+                <LinearProgress
+                  variant="determinate"
+                  value={stageProgress[index]}
+                  sx={{
+                    height: 6,
+                    borderRadius: 6,
+                    backgroundColor: 'rgba(31,58,95,0.12)',
+                    '& .MuiLinearProgress-bar': {
+                      borderRadius: 6,
+                      backgroundColor: index < currentStageIndex ? '#2a9d8f' : '#1f3a5f',
+                      transition: 'transform 450ms ease',
+                    },
+                  }}
+                />
+              </Box>
+            ))}
+
+            {session?.session_id && (
+              <Box sx={{ pt: 1, borderTop: '1px solid rgba(31,58,95,0.12)' }}>
+                <Typography variant="caption" color="text.secondary">
+                  Session ID: {session.session_id.slice(0, 16)}...
+                </Typography>
+              </Box>
+            )}
+
+            {processingStatus?.current_stage && (
+              <Box sx={{ mt: 1, p: 1.2, borderRadius: 1.5, backgroundColor: 'rgba(31,58,95,0.05)' }}>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: '#1f3a5f', display: 'block', mb: 0.4 }}>
+                  Current Activity:
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {processingStatus.current_stage}
+                </Typography>
+              </Box>
+            )}
+
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                Overall: {Math.round(overallProgress)}%
+              </Typography>
+              <LinearProgress
+                variant="determinate"
+                value={overallProgress}
+                sx={{
+                  height: 7,
+                  borderRadius: 6,
+                  backgroundColor: 'rgba(31,58,95,0.1)',
+                  '& .MuiLinearProgress-bar': {
+                    borderRadius: 6,
+                    backgroundColor: '#2a9d8f',
+                    transition: 'transform 450ms ease',
+                  },
+                }}
+              />
+            </Box>
+
+            {animationReady && (
+              <Box sx={{ pt: 1 }}>
+                <Button variant="outlined" onClick={openAnimationDialog}>
+                  Open Animation
+                </Button>
+              </Box>
+            )}
+          </Stack>
+        </DialogContent>
+      </Dialog>
+
+      {/* RESULT DIALOG */}
+      <Dialog open={resultDialogOpen} onClose={() => setResultDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1.5 }}>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>
+            Final Prediction
+          </Typography>
+          <IconButton onClick={() => setResultDialogOpen(false)}>
+            <Typography component="span" sx={{ lineHeight: 1 }}>
+              x
+            </Typography>
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <Box
+            sx={{
+              mt: 1,
+              px: 2,
+              py: 2.5,
+              borderRadius: 3,
+              border: '1px solid',
+              borderColor: predictedClassTone.borderColor,
+              backgroundColor: predictedClassTone.background,
+              textAlign: 'center',
+            }}
+          >
+            <Typography variant="overline" color="text.secondary">
+              Predicted Class
+            </Typography>
+            <Typography sx={{ mt: 0.6, fontSize: { xs: 34, md: 40 }, fontWeight: 800, color: predictedClassTone.textColor }}>
+              {prediction?.emotion_class || '-'}
+            </Typography>
+            {prediction?.timestamp && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.6 }}>
+                {new Date(prediction.timestamp).toLocaleString()}
+              </Typography>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 2.5, pb: 2.2 }}>
+          {session && (
+            <Button variant="outlined" onClick={openAnimationDialog}>
+              View Animation
+            </Button>
+          )}
+          <Button variant="contained" onClick={() => setResultDialogOpen(false)}>
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ANIMATION DIALOG */}
+      <Dialog
+        open={animationDialogOpen}
+        onClose={() => setAnimationDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1.5 }}>
+          <Typography variant="h6" sx={{ fontWeight: 800 }}>
+            2D Behavior Animation
+          </Typography>
+          <IconButton onClick={() => setAnimationDialogOpen(false)}>
+            <Typography component="span" sx={{ lineHeight: 1 }}>
+              x
+            </Typography>
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {session ? (
+            <>
+              {animationError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {animationError}
+                </Alert>
+              )}
+              <video
+                key={animationSrc}
+                width="100%"
+                controls
+                style={{ borderRadius: '10px', backgroundColor: '#000' }}
+                onError={() => setAnimationError('Animation failed to load. Try reopening in a few seconds.')}
+              >
+                <source src={animationSrc} type="video/mp4" />
+              Your browser does not support the video tag.
+              </video>
+            </>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Animation is not available.
+            </Typography>
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   )
 }
