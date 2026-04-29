@@ -1,87 +1,116 @@
-# autismEmotionDetection
+# Autism Emotion Detection
 
-Simple web app to upload a video, process it, and view behavior/emotion analysis results.
+A comprehensive web application designed to analyze video inputs for behavior and emotion detection. The system leverages state-of-the-art computer vision models, including OpenCV and MediaPipe, processed through a robust PyTorch AI pipeline to extract insights, visualizing them in an intuitive React frontend.
 
-## Run the App (2 Terminals)
+## 🚀 Features
+- **Video Upload & Processing:** Drag-and-drop React UI for capturing user videos.
+- **Advanced AI Pipeline:** Facial, spatial (skeleton), and coordinate extraction via MediaPipe and OpenCV.
+- **Deep Learning Inference:** Fused Bi-LSTM models and HGNN models built in PyTorch for precise behavioral and emotional analysis.
+- **Real-time Status Polling:** View the progress of the automated backend pipeline natively on the frontend.
+- **2D Animation & Export:** Auto-generates diagnostic animations (skeletal and facial markers) and result exports.
 
-Use these exact commands on Windows.
+---
 
-Terminal 1 (Backend)
-1. cd d:\Projects\autismEmotionDetection
-2. d:/Projects/autismEmotionDetection/.venv/Scripts/python.exe backend/main.py
+## 🛠️ Prerequisites
 
-Terminal 2 (Frontend)
-1. cd d:\Projects\autismEmotionDetection\frontend
-2. npm run dev
+Before you start, make sure you have the following installed on your system:
+- **[Python 3.10+](https://www.python.org/downloads/)** (Backend processing and AI models)
+- **[Node.js 18+](https://nodejs.org/en/)** and **npm** access (Frontend interface)
 
-Open in browser:
-http://localhost:3000/
+> **Important note on Virtual Environments**: You should **never** commit or share the \.venv\ or ode_modules\ folder. They are platform-specific (Windows vs Mac vs Linux) and contain large compiled binaries. Follow the instructions below to easily recreate exactly the same environment on any computer!
 
-Backend API:
-http://localhost:8000/
+---
 
-Health check:
-http://localhost:8000/api/v1/health
+## ⚙️ Installation & Setup
 
-## Workflow by Tech (Simple, No Model Internals)
+We recommend running the application using two separate terminals—one for the FastAPI backend and one for the React frontend.
 
-1. User uploads video in the React + TypeScript UI (using react-dropzone).
-2. Frontend sends the file to FastAPI backend endpoints.
-3. FastAPI receives upload (python-multipart), creates a session, and stores files in data folders.
-4. Backend processing runs video and feature pipeline (OpenCV, MediaPipe, NumPy, PyTorch, SciPy, scikit-learn, pandas, matplotlib, seaborn, Pillow).
-5. Backend keeps writing progress/status updates to session metadata (JSON in data/sessions).
-6. Frontend polls status and then fetches final result/animation from backend APIs.
-7. User sees final output and can open/download animation and exports.
+### 1. Setting up the Backend
+The backend runs on Python and FastAPI. We will set up a virtual environment and install dependencies.
 
-## Tech Used in This Project (Exact)
+1. Open **Terminal 1** and navigate to the project root directory:
+   \\ash
+   cd path/to/autismEmotionDetection
+   \2. Create a Python virtual environment:
+   \\ash
+   # Windows
+   python -m venv .venv
+   
+   # macOS/Linux
+   python3 -m venv .venv
+   \3. Activate the virtual environment:
+   \\ash
+   # Windows (Command Prompt)
+   .venv\Scripts\activate.bat
+   
+   # Windows (PowerShell)
+   .\.venv\Scripts\Activate.ps1
+   
+   # macOS/Linux
+   source .venv/bin/activate
+   \4. Install all required dependencies from equirements.txt\:
+   \\ash
+   pip install -r backend/requirements.txt
+   \
+### 2. Setting up the Frontend
+The frontend runs on React and Vite.
 
-Frontend (used)
-- React 18
-- TypeScript 5
-- Vite 7
-- Material UI (@mui/material)
-- Emotion (@emotion/react, @emotion/styled)
-- react-dropzone
+1. Open **Terminal 2** and navigate to the frontend directory:
+   \\ash
+   cd path/to/autismEmotionDetection/frontend
+   \2. Install the necessary Node packages:
+   \\ash
+   npm install
+   \
+---
 
-Backend/API (used)
-- Python (.venv)
-- FastAPI
-- Uvicorn
-- pydantic
-- python-multipart
-- aiofiles
-- python-dotenv
+## 🏃‍♂️ Running the Application
 
-Video/Processing libs (used)
-- opencv-python
-- mediapipe
-- numpy
-- torch
-- scipy
-- scikit-learn
-- pandas
-- matplotlib
-- seaborn
-- Pillow
+Once both environments are correctly set up, start up the local servers!
 
-Storage (used)
-- Local file-based storage in data/ folders (JSON, NPY, MP4)
+**Terminal 1 (Backend):**
+With your \.venv\ activated in the project root folder:
+\\ash
+python backend/main.py
+\*(The backend API will run on \http://localhost:8000/\)*
 
-## Folder Flow (High Level)
+**Terminal 2 (Frontend):**
+From within the \rontend\ directory:
+\\ash
+npm run dev
+\*(The frontend React app will be accessible at \http://localhost:3000/\)*
 
-- data/uploads: input videos
-- data/processed: processed intermediate outputs
-- data/animations: final animation video per session
-- data/features: extracted feature files
-- data/results: final prediction JSON
-- data/sessions: metadata and progress tracking
+You're done! Visit **http://localhost:3000** in your browser to start using the app.
 
-## Future Scaling Plan (Simple)
+---
 
-1. Move from local data folders to shared/object storage.
-2. Add queue + worker setup so multiple videos process in parallel.
-3. Use a database for sessions/status instead of JSON-only metadata.
-4. Add auth and multi-user workspace/project support.
-5. Add monitoring, logs, retries, and alerts for stability.
-6. Containerize frontend/backend/workers and deploy with autoscaling.
-7. Add API versioning and rate limits for production clients.
+## 📁 System Architecture & Technologies
+
+### Frontend
+- **Framework:** React 18, Vite 7, TypeScript 5
+- **UI & Styling:** Material UI (\@mui/material\), Emotion
+- **Upload Component:** eact-dropzone
+### Backend API
+- **Framework:** FastAPI, Uvicorn, Python 3
+- **Data Parsing:** Pydantic, Python-Multipart
+
+### AI & Data Processing
+- **Computer Vision:** OpenCV (\opencv-python\), MediaPipe
+- **Machine Learning:** PyTorch, Scikit-learn, NumPy, SciPy
+- **Visualization:** Matplotlib, Seaborn, Pillow
+
+---
+
+## 📂 Project Structure
+
+- \ackend/\: Core FastAPI server, AI model integration, and MediaPipe feature extraction scripts.
+- \rontend/\: React SPA configuration and source code.
+- \data/\: Local file storage directory for uploads, intermediate processed outputs, extracted coordinate features, and final diagnostic results.
+- \docs/\: Setup guides, PRDs, bugfix logs, and presentation materials.
+
+---
+
+## 🔮 Future Roadmap
+1. Cloud storage integration (S3/GCS) to replace local file-system.
+2. Background task queues (Celery/Redis) for parallel video processing.
+3. Persistent relational database mapping for user/session continuity.
